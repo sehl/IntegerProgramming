@@ -1,22 +1,19 @@
-# TODO: (1) fix bounds by adding the limits to A
-# NOTE: TO FIX THE CURRENT PROBLEM (endlessness), keep track of bounds and don't run if the bounds are bad
-# (2) if that doesn't work, use bounds, but add/subtract epsilon from the bound
 from scipy.optimize import linprog
 import math
 
-PRECISION = 0.00001
+# requires: Ax <= b, A_eq*x == b_eq, and x >= 0. These are all python lists
+# param di: The discretionary interval for the variable set.
+#						di=0 or di=None: Treat as regular continuous linear program
+#						di=1: Corresponding variable must be an integer value
+#						di may be a list of len(c) numerical values or a single numerical value.
+#						The list indicates the corresponding variable's interval constraint.
+#						A single numerical value indicates that all variables share the same
+#						interval.
+# param answer: Used for debugging.
+# param callback: same attributes as the linprog parameter. Used for debugging.
+# returns:	The optimal x-vector and the value of the objective function
 
-# assumes Ax <= b and x >= 0
-# di is the discretionary interval. If it is a list, it must be the same length as
-# the objective function, c, and each term must be a numerical value indicating the
-# corresponding decision variable's discretionary restraint. If di is a single
-# numerical value, all x-value must have the same interval constraint. di=1 indicates
-# an integer constraint, di=0 indicates the decision variable is only constrained to
-# the real numbers.
-# precision is how many decimal points we care about. Default value is 0.0001
-# returns the optimal x-vector, and the value of the objective function
-
-def intprog(c, A, b, A_eq=None, b_eq=None, answer=None, di=None, callback=None, precision=PRECISION):
+def intprog(c, A, b, A_eq=None, b_eq=None, di=None, answer=None, callback=None):
 	global data
 	data = { # Optimal Solution Information (Hill-climbing behavior throught the program
 					 "profit":None,
@@ -28,7 +25,11 @@ def intprog(c, A, b, A_eq=None, b_eq=None, answer=None, di=None, callback=None, 
 					 "c":[ -z for z in c ],
 					 "var count":len(c),
 					 "constraints":None,
-					 "epsilon":precision,
+					 # The precision-level allows for simplicity when comparing imprecise floating values to one
+					 # another. Typically, we want to have PRECISION <= di * 0.01, where di is the required
+					 # discretionary interval
+					 "precision":list()
+
 					 # Current Solution Information (Mutable, but must be cleared before end of a function
 					 "A":A.copy(),
 					 "b":b.copy(),
@@ -53,6 +54,9 @@ def intprog(c, A, b, A_eq=None, b_eq=None, answer=None, di=None, callback=None, 
 	else:
 		raise TypeError("di must be a list, an int, or None")
 	
+	for i in range(data["var count"]):
+		data["precision"].append(_precision(i))
+	
 	_iphelper()
 	return data["optimal x"], data["profit"]
 
@@ -73,7 +77,7 @@ def _iphelper(callback=None):
 		return
 	data["past solutions"].append(x)
 
-	z = _dotProduct(data["c"], x)
+	z = _dot_product(data["c"], x)
 
 	if data["profit"] is not None and z > data["profit"]:
 		return
@@ -81,7 +85,7 @@ def _iphelper(callback=None):
 	valid = [ _constrained(x[i], i) for i in var_range ]
 	if all(valid):
 		x = tuple([ _round(soln.x[i], i) for i in var_range ])
-		z = _dotProduct(data["c"], x)
+		z = _dot_product(data["c"], x)
 		if data["profit"] is None or z <= data["profit"]:
 			data["optimal x"] = x
 			data["profit"] = z
@@ -145,11 +149,15 @@ def _iphelper(callback=None):
 	data["num tabs"] -= 1
 
 # must both be 1-d lists/arrays of the same length
-def _dotProduct(c, x):
+def _dot_product(c, x):
 	summation = 0
 	for i in range(len(c)):
 		summation += (c[i] * x[i])
 	return summation
+
+# param var_list: a list of the valid variable indices. Orders the indices in order
+def _order(var_list):
+	global data
 
 # returns a boolean value indicating whether x satisfies its interval constraint
 def _constrained(x, idx):
@@ -179,6 +187,13 @@ def _ceil(x, idx):
 	global data
 
 	return _floor(x, idx) + data["constraints"][idx]
+
+def _precision(idx):
+	global data
+	c = data["constraints"][idx]
+	if type(c) is not str:
+		return c / 100.
+	return 0.01
 
 def _round(x, idx):
 	global data

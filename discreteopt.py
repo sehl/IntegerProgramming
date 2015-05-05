@@ -28,7 +28,7 @@ def intprog(c, A, b, A_eq=None, b_eq=None, di=None, answer=None, callback=None):
 					 # The precision-level allows for simplicity when comparing imprecise floating values to one
 					 # another. Typically, we want to have PRECISION <= di * 0.01, where di is the required
 					 # discretionary interval
-					 "precision":list()
+					 "precision":list(),
 
 					 # Current Solution Information (Mutable, but must be cleared before end of a function
 					 "A":A.copy(),
@@ -37,6 +37,8 @@ def intprog(c, A, b, A_eq=None, b_eq=None, di=None, answer=None, callback=None):
 					 "b_eq":b_eq,
 					 # bounds are INCLUSIVE on both ends
 					 "bounds":[ [0,None] ] * len(c),
+					 # order in which to explore leaves of the tree
+					 "order":[ i for i in range(len(c)) ],
 					 # So as to avoid stack overflow and wasting time rechecking the same
 					 # tableaus
 					 "past solutions":list(),
@@ -56,6 +58,8 @@ def intprog(c, A, b, A_eq=None, b_eq=None, di=None, answer=None, callback=None):
 	
 	for i in range(data["var count"]):
 		data["precision"].append(_precision(i))
+	
+	_order()
 	
 	_iphelper()
 	return data["optimal x"], data["profit"]
@@ -91,7 +95,8 @@ def _iphelper(callback=None):
 			data["profit"] = z
 			return
 
-	for i in var_range:
+	for j in var_range:
+		i = data["order"][j]
 		if not valid[i]:
 			lower = _floor(x[i], i)
 			upper = _ceil(x[i], i)
@@ -156,14 +161,87 @@ def _dot_product(c, x):
 	return summation
 
 # param var_list: a list of the valid variable indices. Orders the indices in order
-def _order(var_list):
+# of largest objective coefficient, breaking ties with the largest discretionary
+# interval. (See README for reasoning)
+def _order():
 	global data
+	_order_helper(0, data["var count"])
+
+# Recursively perform a quick-sort with the definitive ordering described above
+# start is inclusive, end is exclusive, start + 2 <= end
+def _order_helper(start, end):
+	global data
+
+	lo = start
+	mid = int((start + end) / 2)
+	hi = end - 1
+	# Base Case: start == end - 2; 2 variables
+	if hi - lo == 2:
+		idx1 = data["order"][lo]
+		idx2 = data["order"][hi]
+		if _compare_vars(idx1, idx2) > 0:
+			data["order"][lo] = idx2
+			data["order"][hi] = idx1
+	elif hi - lo > 2:
+		_sort3(lo, mid, hi)
+		idx1 = data["order"][lo]
+		idx2 = data["order"][mid]
+		idx3 = data["order"][hi]
+		while hi > lo:
+			while lo < hi and _compare_vars(idx1, idx2) <= 0:
+				lo += 1
+				idx1 = data["order"][lo]
+			while hi > lo and _compare_vars(idx2, idx3) <= 0:
+				hi -= 1
+				idx3 = data["order"][hi]
+			if _compare_vars(idx1, idx3) > 0 and hi > lo:
+				data["order"][lo] = idx3
+				data["order"][hi] = idx1
+		_order_helper(start, lo)
+		_order_helper(lo, end)
+		
+def _sort3(lo, mid, hi):
+	idx1 = data["order"][lo]
+	idx2 = data["order"][mid]
+	idx3 = data["order"][hi]
+	if _compare_vars(idx1, idx2) > 1:
+		data["order"][lo] = idx2
+		data["order"][mid] = idx1
+		idx1 = data["order"][lo]
+		idx2 = data["order"][mid]
+	if _compare_vars(idx1, idx3) > 1:
+		data["order"][lo] = idx3
+		data["order"][hi] = idx1
+		idx1 = data["order"][lo]
+		idx3 = data["order"][hi]
+	if _compare_vars(idx2, idx3) > 1:
+		data["order"][mid] = idx3
+		data["order"][hi] = idx2
+		idx2 = data["order"][mid]
+		idx3 = data["order"][hi]
+
+# negative if the variable at idx1 should come before the variable at idx2
+def _compare_vars(idx1, idx2):
+	global data
+	comp = data["c"][idx1] - data["c"][idx2]
+	if not comp:
+		comp = _compare_constraints(idx1, idx2)
+	
+	return comp
+
+# negative if the variable at idx1 should come before the variable at idx2
+def _compare_constraints(idx1, idx2):
+	global data
+	a = data["constraints"][idx1]
+	b = data["constraints"][idx2]
+
+	return b - a
 
 # returns a boolean value indicating whether x satisfies its interval constraint
 def _constrained(x, idx):
 	global data
 	constraints = data["constraints"]
-	epsilon = data["epsilon"]
+	epsilon = data["precision"][idx]
 
 	if constraints[idx] == None or constraints[idx] == 0:
 		return True
